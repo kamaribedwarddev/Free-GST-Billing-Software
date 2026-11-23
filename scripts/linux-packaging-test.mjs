@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +87,8 @@ try {
       try { status = await (await fetch(`http://127.0.0.1:${port}/api/control-panel/status`)).json(); } catch { /* starting */ }
     }
     assert.ok(status, `server answered (log: ${log})`);
-    assert.equal(status.dataFolder, join(work, 'books', 'data'));
+    // Real paths: on macOS the temp folder /var/... is a link to /private/var/...
+    assert.equal(realpathSync(status.dataFolder), realpathSync(join(work, 'books', 'data')));
     assert.equal(status.installKind, 'zip', 'no install-kind.txt: the ZIP updater stays');
     for (const d of [join('data', 'bills'), 'Saved Invoices', 'Trash']) assert.ok(existsSync(join(work, 'books', d)), `${d} is in FGSB_HOME`);
     assert.deepEqual(nextToServer(), repoBefore, 'no data/, Saved Invoices/ or Trash/ made next to server.js');
