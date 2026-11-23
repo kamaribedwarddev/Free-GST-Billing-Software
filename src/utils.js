@@ -675,7 +675,9 @@ export const DEFAULT_DECLARATION = 'We declare that this invoice shows the actua
 // dd-Mon-yy for printing (31-Aug-26), the way Tally prints dates.
 export const formatShortDate = (iso) => {
   if (!iso) return '';
-  const d = new Date(iso);
+  // A plain YYYY-MM-DD read by new Date() is midnight UTC, the day before west
+  // of Greenwich: read it as a local date.
+  const d = parseLocalDate(iso);
   if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-');
 };
