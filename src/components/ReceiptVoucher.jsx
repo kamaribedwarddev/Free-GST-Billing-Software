@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Receipt, Plus, Trash2, Search, Printer, Pencil } from 'lucide-react';
 import { getAllReceipts, saveReceipt, deleteReceipt, getAllBills, getAllClients, getProfile, getNextInvoiceNumber, saveBill } from '../store';
-import { formatCurrency, numberToWords, belongsToProfile, isUnassignedToBusiness, countsAsSales, businessKeyOf, localToday, amountDue, paymentStatusFor, isCancelledBill, clientKey } from '../utils';
+import { formatCurrency, amountToWords, belongsToProfile, isUnassignedToBusiness, countsAsSales, businessKeyOf, localToday, amountDue, paymentStatusFor, isCancelledBill, clientKey, COUNTRIES } from '../utils';
+import { billCurrency, baseCurrencyOf, currencyForClient } from '../utils/fx';
 import UnassignedBanner from './UnassignedBanner';
 import { toast } from './Toast';
 import { confirmAction } from './ConfirmModal';
@@ -9,6 +10,9 @@ import HelpButton from './HelpButton';
 import PageHeader from './PageHeader';
 import ComboInput from './ComboInput';
 import { isReceiptsPayment, withReceiptPayment } from '../utils/bankMatch';
+
+// The same list the client form offers.
+const CURRENCY_CODES = [...new Set(COUNTRIES.map(c => c.currency))];
 
 const PAYMENT_MODES = ['Bank Transfer', 'UPI', 'Cash', 'Cheque', 'Card', 'Other'];
 const MODE_NAMES = { 'bank-transfer': 'Bank Transfer', upi: 'UPI', cash: 'Cash', cheque: 'Cheque', card: 'Card', other: 'Other' };
@@ -21,6 +25,9 @@ const emptyForm = {
   clientName: '',
   clientAddress: '',
   amount: '',
+  // Set when the form opens: the business's own currency, or the invoice's or
+  // client's. Receipts saved before receipts had a currency were in rupees.
+  currency: '',
   paymentMode: 'Bank Transfer',
   referenceNo: '',
   againstInvoice: '',
@@ -31,6 +38,7 @@ export default function ReceiptVoucher() {
   const [receipts, setReceipts] = useState([]);
   const [bills, setBills] = useState([]);
   const [clientNames, setClientNames] = useState([]);
+  const [clients, setClients] = useState([]);
   const [profile, setProfile] = useState({});
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -48,6 +56,7 @@ export default function ReceiptVoucher() {
       // v1.10.84 (#143) - "Received From" suggests the saved clients (shared
       // by every business, as in the Cash Book); any other name still works.
       setClientNames([...new Set((clients || []).map((c) => String(c.name || '').trim()).filter(Boolean))].sort());
+      setClients(clients || []);
       // v1.10.66 (#64 item 2) — receipts belong to one business, like its
       // invoices. Both lists are narrowed: the receipts shown, and the
       // invoices offered in Quick Select and matched by "Against Invoice".
@@ -57,7 +66,7 @@ export default function ReceiptVoucher() {
       setReceipts((recs || []).filter(r => belongsToProfile(r, prof)));
       setBills((bls || []).filter(b => belongsToProfile(b, prof)));
       setProfile(prof || {});
-      return prof || {};
+      return { prof: prof || {}, clients: clients || [] };
     } catch {
       toast('Failed to load data', 'error');
       return null;
@@ -65,12 +74,12 @@ export default function ReceiptVoucher() {
   };
 
   useEffect(() => {
-    loadData().then((prof) => {
+    loadData().then((loaded) => {
       // v1.10.86 - "Record payment" on a client's account (Clients) opens the
       // new receipt for that client; Quick Select then lists their invoices.
       let forClient = '';
       try { forClient = sessionStorage.getItem('gst_receiptFor') || ''; sessionStorage.removeItem('gst_receiptFor'); } catch { /* storage blocked */ }
-      if (forClient && prof) openAdd({ clientName: forClient }, prof);
+      if (forClient && loaded) openAdd({ clientName: forClient }, loaded.prof, loaded.clients);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,12 +106,21 @@ export default function ReceiptVoucher() {
         (r.receiptNo || '').toLowerCase().includes(search.toLowerCase()))
     : receipts;
 
+  // The currency a receipt from this client starts in: their usual one, else
+  // their country's, else the business's own.
+  const currencyForName = (name, prof = profile, list = clients) => {
+    const key = clientKey(name);
+    const cli = key ? list.find(c => clientKey(c.name) === key) : null;
+    return cli ? currencyForClient(cli, prof, { preferred: cli.preferredCurrency }) : baseCurrencyOf(prof);
+  };
+
   // v1.10.86 - prefill (e.g. the client) when opened for a client; a click
   // passes an event, which is not a prefill.
-  const openAdd = async (prefill, prof) => {
+  const openAdd = async (prefill, prof, list) => {
     const receiptNo = await getNextReceiptNo(prof || profile);
     previewedNoRef.current = receiptNo;
-    setForm({ ...emptyForm, date: localToday(), receiptNo, ...(prefill?.clientName ? { clientName: prefill.clientName } : {}) });
+    const p = prof || profile;
+    setForm({ ...emptyForm, date: localToday(), receiptNo, currency: baseCurrencyOf(p), ...(prefill?.clientName ? { clientName: prefill.clientName, currency: currencyForName(prefill.clientName, p, list || clients) } : {}) });
     setEditingId(null);
     setShowForm(true);
   };
@@ -119,6 +137,7 @@ export default function ReceiptVoucher() {
       clientName: rcp.clientName || '',
       clientAddress: rcp.clientAddress || '',
       amount: String(rcp.amount ?? ''),
+      currency: rcp.currency || 'INR',
       // v1.10.86 (#202) - a receipt made from a Dashboard payment keeps the
       // mode as a code (bank-transfer): shown and saved by its name.
       paymentMode: MODE_NAMES[rcp.paymentMode] || rcp.paymentMode || 'Bank Transfer',
@@ -134,6 +153,13 @@ export default function ReceiptVoucher() {
 
   const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
+  // A saved client's name brings their currency, unless the receipt is already
+  // tied to an invoice: the invoice's currency wins.
+  const updateClientName = (value) => setForm(prev => {
+    const known = clients.some(c => clientKey(c.name) === clientKey(value));
+    return { ...prev, clientName: value, ...(known && !prev.againstInvoice.trim() ? { currency: currencyForName(value) } : {}) };
+  });
+
   const selectInvoice = (bill) => {
     setForm(prev => ({
       ...prev,
@@ -142,6 +168,7 @@ export default function ReceiptVoucher() {
       // v1.10.23 — clamp negative (overpaid) to 0 so the new-receipt
       // amount input doesn't start pre-filled with a negative number.
       amount: String(Math.max(0, Math.round((amountDue(bill) - (bill.paidAmount || 0)) * 100) / 100)),
+      currency: billCurrency(bill),
       againstInvoice: bill.invoiceNumber || '',
     }));
   };
@@ -149,6 +176,14 @@ export default function ReceiptVoucher() {
   const handleSave = async () => {
     if (!form.clientName.trim()) { toast('Client name required', 'warning'); return; }
     if (!form.amount || parseFloat(form.amount) <= 0) { toast('Enter valid amount', 'warning'); return; }
+    // The payment is added to the invoice's paid amount as a plain number, so
+    // a USD receipt against a rupee invoice would mark it paid by the wrong sum.
+    const linkedRef = form.againstInvoice?.trim();
+    const linkedBill = linkedRef ? bills.find(b => b.invoiceNumber === linkedRef || b.id === linkedRef) : null;
+    if (linkedBill && billCurrency(linkedBill) !== (form.currency || 'INR')) {
+      toast(`Invoice ${linkedRef} is in ${billCurrency(linkedBill)}. Set the receipt currency to ${billCurrency(linkedBill)} or remove the invoice link.`, 'warning');
+      return;
+    }
     try {
       // v1.10.16 — Edit mode preserves the original receipt number and id so
       // the server upserts in place. Only new receipts reserve a fresh
@@ -386,7 +421,7 @@ export default function ReceiptVoucher() {
                       {/* v1.10.23 — hide the outstanding chip on overpaid
                           bills (they don't need another receipt). */}
                       {(bill.totalAmount - (bill.paidAmount || 0)) > 0.005 && (
-                        <span style={{ fontWeight: 600 }}>{formatCurrency(bill.totalAmount - (bill.paidAmount || 0))}</span>
+                        <span style={{ fontWeight: 600 }}>{formatCurrency(bill.totalAmount - (bill.paidAmount || 0), billCurrency(bill))}</span>
                       )}
                     </button>
                   ))}
@@ -406,11 +441,17 @@ export default function ReceiptVoucher() {
               <div className="form-group" style={{ gridColumn: 'span 2' }}>
                 <label className="form-label" htmlFor="receipt-client">Received From (Client Name) *</label>
                 <ComboInput id="receipt-client" type="text" className="form-input" options={clientNames} listLabel="Clients" placeholder="Start typing a client name"
-                  value={form.clientName} onChange={e => updateField('clientName', e.target.value)} />
+                  value={form.clientName} onChange={e => updateClientName(e.target.value)} />
               </div>
               <div className="form-group">
                 <label className="form-label">Amount *</label>
                 <input type="number" className="form-input" value={form.amount} onChange={e => updateField('amount', e.target.value)} min="0" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="receipt-currency">Currency</label>
+                <select id="receipt-currency" className="form-input" value={form.currency || 'INR'} onChange={e => updateField('currency', e.target.value)}>
+                  {(CURRENCY_CODES.includes(form.currency || 'INR') ? CURRENCY_CODES : [form.currency, ...CURRENCY_CODES]).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Payment Mode</label>
@@ -457,8 +498,8 @@ export default function ReceiptVoucher() {
             <div className="receipt-row"><span className="receipt-label">Payment Mode:</span><span className="receipt-value">{previewReceipt.paymentMode}</span></div>
             {previewReceipt.referenceNo && <div className="receipt-row"><span className="receipt-label">Reference No:</span><span className="receipt-value">{previewReceipt.referenceNo}</span></div>}
             {previewReceipt.againstInvoice && <div className="receipt-row"><span className="receipt-label">Against Invoice:</span><span className="receipt-value">{previewReceipt.againstInvoice}</span></div>}
-            <div className="receipt-amount">{formatCurrency(previewReceipt.amount)}</div>
-            <p className="receipt-words">{numberToWords(previewReceipt.amount)}</p>
+            <div className="receipt-amount">{formatCurrency(previewReceipt.amount, previewReceipt.currency)}</div>
+            <p className="receipt-words">{amountToWords(previewReceipt.amount, previewReceipt.currency)}</p>
             {previewReceipt.note && <p style={{ fontSize: '0.85rem', color: '#64748b' }}>Note: {previewReceipt.note}</p>}
             <div className="receipt-footer">
               <div className="receipt-sig"><div className="receipt-sig-line"></div><span className="receipt-sig-label">Received By</span></div>
@@ -507,7 +548,7 @@ export default function ReceiptVoucher() {
                     <td><span className="invoice-badge">{rcp.receiptNo}</span></td>
                     <td className="font-medium">{rcp.clientName}</td>
                     <td className="text-muted">{rcp.againstInvoice || '-'}</td>
-                    <td style={{ textAlign: 'right' }} className="font-bold">{formatCurrency(rcp.amount)}</td>
+                    <td style={{ textAlign: 'right' }} className="font-bold">{formatCurrency(rcp.amount, rcp.currency)}</td>
                     <td className="text-muted">{rcp.paymentMode}</td>
                     <td>
                       <div className="table-actions">
