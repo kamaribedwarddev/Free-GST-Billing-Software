@@ -34,7 +34,7 @@ export function isPdfBytes(buf) {
 
 // Files the app left in its share folder more than a day ago.
 export function cleanShareTmp(dir, now = Date.now(), maxAge = SHARE_TMP_MAX_AGE) {
-  let names = [];
+  let names;
   try { names = fs.readdirSync(dir); } catch { return 0; }
   let removed = 0;
   for (const n of names) {

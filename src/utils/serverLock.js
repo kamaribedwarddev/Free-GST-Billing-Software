@@ -82,7 +82,7 @@ export async function acquireLock(file, { pid, host, id, identify, isAlive = pid
     } catch (e) {
       if (e.code !== 'EEXIST') return { ok: true, warning: e.message };
     }
-    let raw = '';
+    let raw;
     try { raw = fs.readFileSync(file, 'utf8'); } catch { continue; }
     const held = readLock(file);
     const reason = held ? await lockIsLive(held, { selfPid: pid, selfHost: host, isAlive, identify, now }) : false;

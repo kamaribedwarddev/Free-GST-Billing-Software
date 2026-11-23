@@ -481,7 +481,7 @@ app.get('/api/edit-history', (req, res) => {
   try { files = fs.readdirSync(HISTORY_DIR).filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort().reverse(); } catch { /* none yet */ }
   const out = [];
   for (const f of files) {
-    let lines = [];
+    let lines;
     try { lines = readHistoryTail(path.join(HISTORY_DIR, f)).split('\n').filter(Boolean); } catch { continue; }
     for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
       try { out.push(JSON.parse(lines[i])); } catch { /* a torn line */ }
@@ -2483,7 +2483,7 @@ async function updateWithSetup() {
     if (!asset) throw new Error(`The new version's Setup is not on GitHub yet. Try again later, or download ${SETUP_NAME} from the Releases page.`);
     let res;
     try { res = await fetchFromGitHub(asset.url, 15 * 60 * 1000); } catch (e) {
-      throw new Error(e.message.startsWith('The download') ? e.message : 'The new version could not be downloaded. Check the internet connection and try again.');
+      throw new Error(e.message.startsWith('The download') ? e.message : 'The new version could not be downloaded. Check the internet connection and try again.', { cause: e });
     }
     if (!res.ok) throw new Error(`The download failed (${res.status}). Try again later.`);
     // v1.10.86 - read in pieces, so the page's bar shows how much has arrived.

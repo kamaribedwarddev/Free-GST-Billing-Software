@@ -38,7 +38,7 @@ export function resolveAppHome(appDir, env = process.env) {
   // Windows Setup, must be a full path.
   if (from === HOME_ENV) home = path.resolve(home);
   if (!path.isAbsolute(home)) throw new Error(`${from} must be a full folder path, but it is "${home}".`);
-  let isDir = false;
+  let isDir;
   try { isDir = fs.statSync(home).isDirectory(); } catch { isDir = false; }
   if (!isDir) throw new Error(`The folder with your books is not there: ${home} (from ${from}). If it is on a USB or network drive, connect it and open the app again.`);
   return path.resolve(home);

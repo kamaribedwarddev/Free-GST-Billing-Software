@@ -1629,7 +1629,7 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
         // `!mergedOpts.paymentAccountSnapshot` check below sees a snapshot
         // that isn't actually the current bill's. That single bug defeated
         // the entire v1.10.19 backfill in practice.
-        let mergedOpts = null;
+        let mergedOpts;
         try {
           const saved = localStorage.getItem('freegstbill_invoiceOptions');
           const persisted = saved ? JSON.parse(saved) : {};

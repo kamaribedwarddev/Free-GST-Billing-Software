@@ -410,7 +410,7 @@ export default function BillOCR({ onClose, onExtracted }) {
       // undefined) → `String(undefined)` → the toast said "undefined".
       // Now we normalize aggressively across every shape tesseract can
       // throw / reject.
-      let msg = '';
+      let msg;
       if (typeof err === 'string') msg = err;
       else if (err && typeof err.message === 'string' && err.message) msg = err.message;
       else if (err && typeof err.data === 'string') msg = err.data;
